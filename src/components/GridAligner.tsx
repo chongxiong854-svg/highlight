@@ -17,11 +17,15 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [rows, setRows] = useState(20);
-  const [cols, setCols] = useState(20);
+  const [rowsInput, setRowsInput] = useState<string>('20');
+  const [colsInput, setColsInput] = useState<string>('20');
+  const rows = Math.max(1, parseInt(rowsInput) || 1);
+  const cols = Math.max(1, parseInt(colsInput) || 1);
+  
   const [tl, setTl] = useState<Point>({ x: 50, y: 50 });
   const [br, setBr] = useState<Point>({ x: 250, y: 250 });
-  const [dragging, setDragging] = useState<'tl' | 'br' | null>(null);
+  const [dragging, setDragging] = useState<'tl' | 'br' | 'all' | null>(null);
+  const [dragStart, setDragStart] = useState<{ mouse: Point, tl: Point, br: Point } | null>(null);
   const [scale, setScale] = useState(1);
   const [isRecognizing, setIsRecognizing] = useState(false);
 
@@ -29,9 +33,13 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
     const img = new Image();
     img.onload = () => {
       setImage(img);
-      // Initial points based on image size
+      // Initial points based on image size, enforcing square cells
+      const initialWidth = img.width * 0.8;
+      const cellWidth = initialWidth / cols;
+      const initialHeight = cellWidth * rows;
+      
       const initialTl = { x: img.width * 0.1, y: img.height * 0.1 };
-      const initialBr = { x: img.width * 0.9, y: img.height * 0.9 };
+      const initialBr = { x: initialTl.x + initialWidth, y: initialTl.y + initialHeight };
       setTl(initialTl);
       setBr(initialBr);
       
@@ -42,7 +50,17 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
       }
     };
     img.src = imageUrl;
-  }, [imageUrl]);
+  }, [imageUrl]); // Removed rows/cols dependency to avoid resetting on input change
+
+  // Enforce square cells when rows/cols change
+  useEffect(() => {
+    if (image) {
+      const currentWidth = br.x - tl.x;
+      const cellWidth = currentWidth / cols;
+      const newHeight = cellWidth * rows;
+      setBr(prev => ({ ...prev, y: tl.y + newHeight }));
+    }
+  }, [rows, cols]);
 
   useEffect(() => {
     if (!image || !canvasRef.current) return;
@@ -89,6 +107,12 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
     ctx.arc(br.x, br.y, handleRadius, 0, Math.PI * 2);
     ctx.fill();
 
+    // Draw center handle for dragging
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+    ctx.beginPath();
+    ctx.arc((tl.x + br.x) / 2, (tl.y + br.y) / 2, handleRadius * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
   }, [image, tl, br, rows, cols, scale]);
 
   const getMousePos = (e: React.MouseEvent | React.TouchEvent) => {
@@ -110,30 +134,51 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
 
   const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
     const pos = getMousePos(e);
-    const handleRadius = 15 / scale; // larger hit area
+    const handleRadius = 20 / scale; // larger hit area
     
     const distTl = Math.hypot(pos.x - tl.x, pos.y - tl.y);
     const distBr = Math.hypot(pos.x - br.x, pos.y - br.y);
+    
+    // Check if clicking inside the grid for dragging
+    const isInsideGrid = pos.x > tl.x && pos.x < br.x && pos.y > tl.y && pos.y < br.y;
 
     if (distTl < handleRadius) {
       setDragging('tl');
     } else if (distBr < handleRadius) {
       setDragging('br');
+    } else if (isInsideGrid) {
+      setDragging('all');
+      setDragStart({ mouse: pos, tl: { ...tl }, br: { ...br } });
     }
   };
 
   const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!dragging) return;
     const pos = getMousePos(e);
+    
     if (dragging === 'tl') {
-      setTl({ x: Math.min(pos.x, br.x - 10), y: Math.min(pos.y, br.y - 10) });
+      const newX = Math.min(pos.x, br.x - 10);
+      const width = br.x - newX;
+      const cellWidth = width / cols;
+      const height = cellWidth * rows;
+      setTl({ x: newX, y: br.y - height });
     } else if (dragging === 'br') {
-      setBr({ x: Math.max(pos.x, tl.x + 10), y: Math.max(pos.y, tl.y + 10) });
+      const newX = Math.max(pos.x, tl.x + 10);
+      const width = newX - tl.x;
+      const cellWidth = width / cols;
+      const height = cellWidth * rows;
+      setBr({ x: newX, y: tl.y + height });
+    } else if (dragging === 'all' && dragStart) {
+      const dx = pos.x - dragStart.mouse.x;
+      const dy = pos.y - dragStart.mouse.y;
+      setTl({ x: dragStart.tl.x + dx, y: dragStart.tl.y + dy });
+      setBr({ x: dragStart.br.x + dx, y: dragStart.br.y + dy });
     }
   };
 
   const handlePointerUp = () => {
     setDragging(null);
+    setDragStart(null);
   };
 
   const handleRecognize = async () => {
@@ -167,7 +212,7 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
   return (
     <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-4 items-end justify-between">
-        <div className="flex gap-4">
+        <div className="flex gap-4 flex-wrap">
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
               <Settings className="w-4 h-4" /> 行数 (Rows)
@@ -175,8 +220,8 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
             <input 
               type="number" 
               min="1" 
-              value={rows} 
-              onChange={e => setRows(Math.max(1, parseInt(e.target.value) || 1))}
+              value={rowsInput} 
+              onChange={e => setRowsInput(e.target.value)}
               className="w-24 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             />
           </div>
@@ -187,8 +232,8 @@ export function GridAligner({ imageUrl, onRecognize, progress }: GridAlignerProp
             <input 
               type="number" 
               min="1" 
-              value={cols} 
-              onChange={e => setCols(Math.max(1, parseInt(e.target.value) || 1))}
+              value={colsInput} 
+              onChange={e => setColsInput(e.target.value)}
               className="w-24 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             />
           </div>

@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: patterns
+    // Document ID: patternId
+    // Fields:
+    //   - id: string (required) - Unique identifier
+    //   - name: string (required) - Name of the pattern
+    //   - timestamp: number (required) - Creation or last update timestamp
+    //   - rows: number (required) - Number of rows
+    //   - cols: number (required) - Number of columns
+    //   - cells: string (required) - Stringified JSON of ParsedCell array
+    //   - groups: string (required) - Stringified JSON of ColorGroup array
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    
+    // Domain Validator
+    function isValidPattern() {
+      return hasOnlyAllowedFields(['id', 'name', 'timestamp', 'rows', 'cols', 'cells', 'groups']) &&
+             request.resource.data.id is string && request.resource.data.id.size() > 0 && request.resource.data.id.size() < 100 &&
+             request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100 &&
+             request.resource.data.timestamp is number &&
+             request.resource.data.rows is number && request.resource.data.rows > 0 &&
+             request.resource.data.cols is number && request.resource.data.cols > 0 &&
+             request.resource.data.cells is string && request.resource.data.cells.size() < 1000000 &&
+             request.resource.data.groups is string && request.resource.data.groups.size() < 100000;
+    }
+
+    match /patterns/{patternId} {
+      allow read: if true;
+      allow create: if isValidPattern();
+      allow update: if isValidPattern();
+    }
+  }
+}

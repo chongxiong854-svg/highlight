@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "Pattern": {
+      "title": "Pattern",
+      "description": "A saved bead pattern grid",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the pattern" },
+        "name": { "type": "string", "description": "Name of the pattern" },
+        "timestamp": { "type": "number", "description": "Creation or last update timestamp" },
+        "rows": { "type": "number", "description": "Number of rows in the grid" },
+        "cols": { "type": "number", "description": "Number of columns in the grid" },
+        "cells": { "type": "string", "description": "Stringified JSON of ParsedCell array" },
+        "groups": { "type": "string", "description": "Stringified JSON of ColorGroup array" }
+      },
+      "required": ["id", "name", "timestamp", "rows", "cols", "cells", "groups"]
+    }
+  },
+  "firestore": {
+    "/patterns/{patternId}": {
+      "schema": "Pattern",
+      "description": "Stores global saved patterns accessible via identity code"
+    }
+  }
+}
