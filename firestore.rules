@@ -46,5 +46,10 @@ service cloud.firestore {
       allow create: if isValidPattern();
       allow update: if isValidPattern();
     }
+
+    match /users/{userId}/patterns/{patternId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
   }
 }

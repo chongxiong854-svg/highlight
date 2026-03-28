@@ -3,9 +3,8 @@ import { Eye, EyeOff, Edit2, Check, X, Highlighter, Save, ZoomIn, ZoomOut, Clock
 import * as htmlToImage from 'html-to-image';
 import jsPDF from 'jspdf';
 import { ParsedCell, ColorGroup } from '../lib/imageProcessor';
-import { cn } from '../lib/utils';
+import { cn, sortColorCodes } from '../lib/utils';
 import { SavedPattern } from '../App';
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 import { STANDARD_COLORS, findClosestColor } from '../lib/colorMap';
 
@@ -54,6 +53,10 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
   const [showOtherMenu, setShowOtherMenu] = useState(false);
   const otherMenuRef = useRef<HTMLDivElement>(null);
 
+  const sortedGroups = useMemo(() => {
+    return [...groups].sort((a, b) => sortColorCodes(a.code, b.code));
+  }, [groups]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (otherMenuRef.current && !otherMenuRef.current.contains(event.target as Node)) {
@@ -100,7 +103,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
       newGroupsMap.get(cell.groupId)!.count++;
     });
 
-    const newGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.count - a.count);
+    const newGroups = Array.from(newGroupsMap.values()).sort((a, b) => sortColorCodes(a.code, b.code));
 
     onUpdateCells(newCells, newGroups);
     setSelectedGroupIds([]);
@@ -147,7 +150,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
       newGroupsMap.get(cell.groupId)!.count++;
     });
 
-    const newGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.count - a.count);
+    const newGroups = Array.from(newGroupsMap.values()).sort((a, b) => sortColorCodes(a.code, b.code));
 
     onUpdateCells(newCells, newGroups);
     setEditingGroup(null);
@@ -362,6 +365,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                     return;
                   }
                   if (recolorTargetCell) {
+                    setHistory(prev => [...prev, { cells, groups }]);
                     // Apply recolor
                     const newCells = [...cells];
                     recolorSelectedCells.forEach(selectedCell => {
@@ -394,7 +398,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
 
                     const newGroups = Array.from(newGroupsMap.values())
                       .filter(g => g.count > 0)
-                      .sort((a, b) => b.count - a.count);
+                      .sort((a, b) => sortColorCodes(a.code, b.code));
 
                     onUpdateCells(newCells, newGroups);
                   }
@@ -795,7 +799,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {groups.map(g => (
+            {sortedGroups.map(g => (
               <button
                 key={g.id}
                 onClick={() => toggleHighlight(g.id)}
@@ -853,33 +857,28 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
 
       <div className="flex flex-col gap-6">
         {/* Grid View */}
-        <div className="w-full bg-gray-50 p-4 rounded-xl border border-gray-200 overflow-hidden flex justify-center items-start relative h-[170vh]">
-          <TransformWrapper
-            initialScale={1}
-            minScale={0.1}
-            maxScale={5}
-            centerOnInit
-            wheel={{ step: 0.1 }}
+        <div 
+          className="w-fit max-w-full mx-auto bg-gray-50 p-4 rounded-xl border border-gray-200 overflow-auto relative"
+          style={{ maxHeight: '80vh' }}
+        >
+          <div 
+            ref={gridRef}
+            className={cn(
+              "flex flex-col items-center mx-auto",
+              isExporting ? "bg-white p-8 rounded-xl" : ""
+            )}
+            style={{ width: 'fit-content' }}
           >
-            <TransformComponent wrapperStyle={{ width: "100%", height: "100%" }}>
-              <div 
-                ref={gridRef}
-                className={cn(
-                  "flex flex-col items-center",
-                  isExporting ? "bg-white p-8 rounded-xl" : ""
-                )}
-                style={{ width: 'fit-content' }}
-              >
-                <div className="flex flex-col">
+            <div className="flex flex-col">
                   {/* Column numbers */}
                   <div className="flex">
-                    <div style={{ width: `${24 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
+                    <div style={{ width: `${32 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
                     <div 
                       className="grid border border-transparent" 
                       style={{ 
-                        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                        gridTemplateColumns: `repeat(${cols}, ${28 * zoom}px)`,
                         width: 'fit-content',
-                        gap: !showColorCode ? '0.25px' : '1px'
+                        gap: '1px'
                       }}
                     >
                       {Array.from({ length: cols }).map((_, i) => (
@@ -892,23 +891,23 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                         </div>
                       ))}
                     </div>
-                    <div style={{ width: `${24 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
+                    <div style={{ width: `${32 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
                   </div>
                   <div className="flex">
                     {/* Row numbers */}
                     <div 
                       className="grid border border-transparent"
                       style={{
-                        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+                        gridTemplateRows: `repeat(${rows}, ${28 * zoom}px)`,
                         height: 'fit-content',
-                        gap: !showColorCode ? '0.25px' : '1px'
+                        gap: '1px'
                       }}
                     >
                       {Array.from({ length: rows }).map((_, i) => (
                         <div 
                           key={`row-${i}`} 
                           className="flex items-center justify-center text-gray-500 font-medium"
-                          style={{ width: `${24 * zoom}px`, height: `${28 * zoom}px`, fontSize: `${12 * zoom}px` }}
+                          style={{ width: `${32 * zoom}px`, height: `${28 * zoom}px`, fontSize: `${12 * zoom}px` }}
                         >
                           {i + 1}
                         </div>
@@ -916,11 +915,12 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                     </div>
                     {/* Grid */}
                     <div 
-                      className="grid bg-gray-300 border border-gray-400 select-none"
+                      className={cn("grid border select-none", !showColorCode ? "bg-gray-200 border-gray-200" : "bg-gray-300 border-gray-400")}
                       style={{ 
-                        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                        gridTemplateColumns: `repeat(${cols}, ${28 * zoom}px)`,
+                        gridTemplateRows: `repeat(${rows}, ${28 * zoom}px)`,
                         width: 'fit-content',
-                        gap: !showColorCode ? '0.25px' : '1px'
+                        gap: '1px'
                       }}
                     >
                       {cells.map((cell, i) => {
@@ -989,16 +989,16 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                     <div 
                       className="grid border border-transparent"
                       style={{
-                        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+                        gridTemplateRows: `repeat(${rows}, ${28 * zoom}px)`,
                         height: 'fit-content',
-                        gap: !showColorCode ? '0.25px' : '1px'
+                        gap: '1px'
                       }}
                     >
                       {Array.from({ length: rows }).map((_, i) => (
                         <div 
                           key={`row-right-${i}`} 
                           className="flex items-center justify-center text-gray-500 font-medium"
-                          style={{ width: `${24 * zoom}px`, height: `${28 * zoom}px`, fontSize: `${12 * zoom}px` }}
+                          style={{ width: `${32 * zoom}px`, height: `${28 * zoom}px`, fontSize: `${12 * zoom}px` }}
                         >
                           {i + 1}
                         </div>
@@ -1007,13 +1007,13 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                   </div>
                   {/* Bottom Column numbers */}
                   <div className="flex">
-                    <div style={{ width: `${24 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
+                    <div style={{ width: `${32 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
                     <div 
                       className="grid border border-transparent" 
                       style={{ 
-                        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                        gridTemplateColumns: `repeat(${cols}, ${28 * zoom}px)`,
                         width: 'fit-content',
-                        gap: !showColorCode ? '0.25px' : '1px'
+                        gap: '1px'
                       }}
                     >
                       {Array.from({ length: cols }).map((_, i) => (
@@ -1026,7 +1026,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                         </div>
                       ))}
                     </div>
-                    <div style={{ width: `${24 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
+                    <div style={{ width: `${32 * zoom}px`, border: '1px solid transparent' }} className="shrink-0"></div>
                   </div>
                 </div>
                 
@@ -1035,7 +1035,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                   <div className="w-full mt-8 pt-6 border-t border-gray-200 max-w-4xl">
                     <h3 className="text-2xl font-bold text-gray-800 mb-6 text-center">色号统计</h3>
                     <div className="flex flex-wrap justify-center gap-4">
-                      {groups.map((group) => (
+                      {sortedGroups.map((group) => (
                         <div key={group.id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50 shadow-sm">
                           <div 
                             className="w-8 h-8 rounded-full border-2 border-gray-300 shadow-sm shrink-0"
@@ -1051,8 +1051,6 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                   </div>
                 )}
               </div>
-            </TransformComponent>
-          </TransformWrapper>
         </div>
 
         {/* Bottom Panel */}
@@ -1062,6 +1060,14 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
               <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
                 <Edit2 className="w-5 h-5" /> 色号统计与合并
               </h3>
+              <button
+                onClick={handleUndo}
+                disabled={history.length === 0}
+                className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-1"
+                title="撤销上一步操作"
+              >
+                <Undo className="w-4 h-4" /> 撤销
+              </button>
             </div>
             
             {!highlightMode && selectedGroupIds.length > 0 && (
@@ -1074,7 +1080,7 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                     onChange={(e) => setTargetGroupId(e.target.value)}
                   >
                     <option value="">-- 选择目标色号 --</option>
-                    {groups.map(g => (
+                    {sortedGroups.map(g => (
                       <option key={g.id} value={g.id}>{g.code || '未分配'} (数量: {g.count})</option>
                     ))}
                   </select>
@@ -1085,20 +1091,12 @@ export function PatternViewer({ cells, groups, rows, cols, onUpdateCells, onSave
                   >
                     合并色号
                   </button>
-                  <button
-                    onClick={handleUndo}
-                    disabled={history.length === 0}
-                    className="px-4 py-2 bg-white text-gray-700 border border-gray-300 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-1"
-                    title="撤销上一步操作"
-                  >
-                    <Undo className="w-4 h-4" /> 撤销
-                  </button>
                 </div>
               </div>
             )}
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {groups.map((group) => {
+              {sortedGroups.map((group) => {
                 const isSelected = selectedGroupIds.includes(group.id);
                 const isHighlighted = highlightMode && highlightedGroupIds.includes(group.id);
 

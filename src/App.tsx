@@ -37,7 +37,7 @@ export default function App() {
 
   // Modal states
   const [renameModal, setRenameModal] = useState<{ id: string, name: string } | null>(null);
-  const [copyModal, setCopyModal] = useState<{ id: string } | null>(null);
+
   const [renameInput, setRenameInput] = useState('');
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -207,11 +207,28 @@ export default function App() {
   };
 
   const handleImportPattern = async () => {
-    if (!importCode.trim()) return;
+    const code = importCode.trim().toUpperCase();
+    if (!code) return;
     setIsImporting(true);
+    
+    // Check local history first
+    const localPattern = savedPatterns.find(p => p.id === code);
+    if (localPattern) {
+      handleLoadPattern(localPattern);
+      setIsImporting(false);
+      return;
+    }
+
     try {
-      const patternRef = doc(db, `patterns`, importCode.trim().toUpperCase());
-      const docSnap = await getDoc(patternRef);
+      const patternRef = doc(db, `patterns`, code);
+      let docSnap = await getDoc(patternRef);
+      
+      // Fallback to old user-specific path if logged in
+      if (!docSnap.exists() && user) {
+        const oldPatternRef = doc(db, `users/${user.uid}/patterns`, code);
+        docSnap = await getDoc(oldPatternRef);
+      }
+
       if (docSnap.exists()) {
         const data = docSnap.data();
         const importedPattern: SavedPattern = {
@@ -255,7 +272,13 @@ export default function App() {
         <div className="flex items-center gap-3 flex-wrap">
           {!user ? (
             <button
-              onClick={signInWithGoogle}
+              onClick={async () => {
+                try {
+                  await signInWithGoogle();
+                } catch (e: any) {
+                  setAlertMessage('登录失败：' + (e.message || '未知错误'));
+                }
+              }}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shadow-sm"
             >
               <LogIn className="w-4 h-4" /> 登录以同步图纸
@@ -351,7 +374,9 @@ export default function App() {
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            setCopyModal({ id: pattern.id });
+                            navigator.clipboard.writeText(pattern.id);
+                            setToastMessage('复制成功！');
+                            setTimeout(() => setToastMessage(null), 1000);
                           }}
                           className="p-2 text-gray-400 hover:text-green-500 hover:bg-green-100 rounded-lg transition-colors"
                           title="复制身份码"
@@ -452,44 +477,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Copy Modal */}
-      {copyModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-800">复制身份码</h3>
-              <button onClick={() => setCopyModal(null)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="mb-6">
-              <p className="text-sm text-gray-600 mb-2">图纸身份码：</p>
-              <div className="bg-gray-100 p-3 rounded-lg text-center font-mono text-xl font-bold tracking-wider text-gray-800">
-                {copyModal.id}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setCopyModal(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(copyModal.id);
-                  setCopyModal(null);
-                  setToastMessage('复制成功！');
-                  setTimeout(() => setToastMessage(null), 1000);
-                }}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700"
-              >
-                <Copy className="w-4 h-4" /> 确认复制
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Toast Message */}
       {toastMessage && (

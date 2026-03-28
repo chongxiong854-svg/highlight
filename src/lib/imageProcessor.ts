@@ -40,6 +40,10 @@ export async function processGrid(
     logger: m => {
       if (m.status === 'recognizing text' && onProgress) {
         onProgress(0.1 + m.progress * 0.5); // 0.1 to 0.6
+      } else if (onProgress) {
+        if (m.status === 'loading tesseract core') onProgress(0.02);
+        if (m.status === 'loading language traineddata') onProgress(0.03 + (m.progress || 0) * 0.05);
+        if (m.status === 'initializing api') onProgress(0.09);
       }
     }
   });
@@ -72,24 +76,34 @@ export async function processGrid(
 
   if (onProgress) onProgress(0.7);
 
+  const fullImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const pixelData = fullImageData.data;
+  const width = canvas.width;
+
   // Helper to get average color of the top-left region to avoid center text
   const getAverageColor = (x: number, y: number, w: number, h: number) => {
-    const cx = x + w * 0.1;
-    const cy = y + h * 0.1;
-    const cw = w * 0.25;
-    const ch = h * 0.25;
+    const startX = Math.floor(x + w * 0.1);
+    const startY = Math.floor(y + h * 0.1);
+    const endX = Math.floor(startX + w * 0.25);
+    const endY = Math.floor(startY + h * 0.25);
     
-    const imageData = ctx.getImageData(cx, cy, cw, ch);
-    const data = imageData.data;
     let r = 0, g = 0, b = 0;
-    const count = data.length / 4;
+    let count = 0;
     
-    for (let i = 0; i < data.length; i += 4) {
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
+    for (let py = startY; py < endY; py++) {
+      for (let px = startX; px < endX; px++) {
+        if (px >= 0 && px < width && py >= 0 && py < canvas.height) {
+          const idx = (py * width + px) * 4;
+          r += pixelData[idx];
+          g += pixelData[idx + 1];
+          b += pixelData[idx + 2];
+          count++;
+        }
+      }
     }
     
+    if (count === 0) return { r: 255, g: 255, b: 255 };
+
     return {
       r: Math.round(r / count),
       g: Math.round(g / count),
@@ -109,45 +123,56 @@ export async function processGrid(
 
   const parsedCells: ParsedCell[] = [];
 
-  for (const cell of cells) {
-    const avgColor = getAverageColor(cell.x, cell.y, cell.width, cell.height);
-    
-    // Find closest existing color group
-    let matchedGroup = null;
-    for (const uc of uniqueColors) {
-      if (colorDistance(avgColor, uc) < 25) { // Threshold for color similarity
-        matchedGroup = uc;
-        break;
+  // Process cells in chunks to avoid blocking the main thread
+  const chunkSize = 500;
+  for (let i = 0; i < cells.length; i += chunkSize) {
+    const chunk = cells.slice(i, i + chunkSize);
+    for (const cell of chunk) {
+      const avgColor = getAverageColor(cell.x, cell.y, cell.width, cell.height);
+      
+      // Find closest existing color group
+      let matchedGroup = null;
+      for (const uc of uniqueColors) {
+        if (colorDistance(avgColor, uc) < 25) { // Threshold for color similarity
+          matchedGroup = uc;
+          break;
+        }
       }
-    }
 
-    if (!matchedGroup) {
-      matchedGroup = {
-        ...avgColor,
-        hex: rgbToHex(avgColor.r, avgColor.g, avgColor.b),
-        id: `G${colorCounter++}`
-      };
-      uniqueColors.push(matchedGroup);
-    }
+      if (!matchedGroup) {
+        matchedGroup = {
+          ...avgColor,
+          hex: rgbToHex(avgColor.r, avgColor.g, avgColor.b),
+          id: `G${colorCounter++}`
+        };
+        uniqueColors.push(matchedGroup);
+      }
 
-    const key = `${cell.row},${cell.col}`;
-    let rawText = cellTextMap.get(key) || "";
+      const key = `${cell.row},${cell.col}`;
+      let rawText = cellTextMap.get(key) || "";
+      
+      // Validate text: should be like A1, B12, M5, etc.
+      let colorCode = "";
+      const match = rawText.match(/([A-Z][0-9]{1,2})/);
+      if (match) {
+        colorCode = match[1];
+      }
+
+      parsedCells.push({
+        row: cell.row,
+        col: cell.col,
+        colorCode: colorCode, // Might be empty
+        color: matchedGroup.hex,
+        originalColor: matchedGroup.hex,
+        groupId: matchedGroup.id
+      });
+    }
     
-    // Validate text: should be like A1, B12, M5, etc.
-    let colorCode = "";
-    const match = rawText.match(/([A-Z][0-9]{1,2})/);
-    if (match) {
-      colorCode = match[1];
+    if (onProgress) {
+      onProgress(0.7 + (i / cells.length) * 0.2); // 0.7 to 0.9
     }
-
-    parsedCells.push({
-      row: cell.row,
-      col: cell.col,
-      colorCode: colorCode, // Might be empty
-      color: matchedGroup.hex,
-      originalColor: matchedGroup.hex,
-      groupId: matchedGroup.id
-    });
+    // Yield to main thread
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   if (onProgress) onProgress(0.9);
@@ -177,7 +202,29 @@ export async function processGrid(
     group.count++;
   }
 
-  const groups = Array.from(groupMap.values()).sort((a, b) => b.count - a.count);
+  const groups = Array.from(groupMap.values()).sort((a, b) => {
+    const codeA = (a.code || '').trim();
+    const codeB = (b.code || '').trim();
+    
+    const matchA = codeA.match(/^([A-Za-z]*)(.*)$/);
+    const matchB = codeB.match(/^([A-Za-z]*)(.*)$/);
+    
+    const lettersA = (matchA ? matchA[1] : '').toUpperCase();
+    const lettersB = (matchB ? matchB[1] : '').toUpperCase();
+    
+    if (lettersA !== lettersB) {
+      return lettersA.localeCompare(lettersB);
+    }
+    
+    const numA = parseInt(matchA ? matchA[2] : '0', 10);
+    const numB = parseInt(matchB ? matchB[2] : '0', 10);
+    
+    if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+      return numA - numB;
+    }
+    
+    return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+  });
 
   if (onProgress) onProgress(1.0);
 
